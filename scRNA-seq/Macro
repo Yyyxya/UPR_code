@@ -1,0 +1,361 @@
+##巨噬细胞的亚群细分
+load('./sc_BRCA/sce_hl_BRCA.RData')
+table(sce@meta.data$orig.ident)
+table(sce@meta.data$celltype)
+M_sce<-subset(x=sce,idents=c('Marcrophages'))
+
+
+options(stringsAsFactors = F) 
+library(Seurat)
+library(ggplot2)
+library(clustree)
+library(cowplot)
+library(dplyr)
+library(stringr)
+sce.all<-sc.QC.caculate(M_sce,cellcycle = F)
+p.VlnPlot = VlnPlot(M_sce,
+                    features = c("nFeature_RNA", "nCount_RNA", 
+                                 "percent.mt","percent.ribo","percent.hb"),
+                    ncol = 5,
+                    group.by = "group")
+p.VlnPlot
+
+
+#harmony降维聚类
+library(patchwork)
+library(readr)
+library(ggplot2)
+library(RColorBrewer)
+library(future)
+library(clustree)
+library(cowplot)
+library(stringr)
+library(harmony)
+
+# sce.all=readRDS("../1-QC/sce.all_qc.rds")
+sce=M_sce
+sce
+sce <- sce %>% NormalizeData(verbose = F) %>%
+  FindVariableFeatures(selection.method = "vst", nfeatures = 2000, verbose = F) %>% 
+  ScaleData(verbose = F) %>%
+  RunPCA(npcs = 30, verbose = F)
+
+n.pcs=30
+
+sce <- sce %>% 
+  RunUMAP(reduction = "pca", dims = 1:n.pcs, verbose = F) %>% 
+  #RunTSNE(reduction = "pca", dims = 1:n.pcs, verbose = F) %>% 
+  FindNeighbors(reduction = "pca", k.param = 10, dims = 1:n.pcs)
+
+p1.compare=wrap_plots(ncol = 2,
+                      DimPlot(sce, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("Before_PCA"),
+                      DimPlot(sce, reduction = "umap", group.by = "orig.ident")+NoAxes()+ggtitle("Before_UMAP"),
+                      guides = "collect")
+p1.compare
+
+
+library(harmony)
+
+seuratObj <- RunHarmony(sce, "orig.ident")
+names(seuratObj@reductions)
+seuratObj <- RunUMAP(seuratObj,  dims = 1:15, 
+                     reduction = "harmony")
+DimPlot(seuratObj,reduction = "umap",label=T ) 
+
+sce=seuratObj
+sce <- FindNeighbors(sce, reduction = "harmony",
+                     dims = 1:15) 
+sce.all=sce
+
+p2.compare=wrap_plots(ncol = 2,
+                      DimPlot(sce, reduction = "pca", group.by = "orig.ident")+NoAxes()+ggtitle("After_PCA"),
+                     # DimPlot(sce, reduction = "umap", group.by = "sampleID")+NoAxes()+ggtitle("After_UMAP"),
+                      guides = "collect"
+)
+p2.compare
+
+
+for (res in c(0.01, 0.05, 0.1, 0.2, 0.3,0.4,0.5,0.8,1)) {
+  sce.all=FindClusters(sce.all, #graph.name = "CCA_snn",
+                       resolution = res, algorithm = 1)
+}
+
+cluster_umap <- wrap_plots(ncol = 4,
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.05", label = T) & NoAxes(),  
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.1", label = T) & NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.2", label = T)& NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.3", label = T)& NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.4", label = T)& NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.5", label = T) & NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.8", label = T) & NoAxes(), 
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.1", label = T) & NoAxes(),
+                           DimPlot(sce.all, reduction = "umap", group.by = "RNA_snn_res.0.01", label = T) & NoAxes()
+)
+cluster_umap
+
+head(colnames(sce.all))
+table(sce.all$orig.ident)
+table(sce.all$group)
+
+
+#接下来分析，按照分辨率为0.8进行 
+sel.clust = "RNA_snn_res.0.3"
+sce.all <- SetIdent(sce.all, value = sel.clust)
+table(sce.all@active.ident) 
+saveRDS(sce.all, './sc_BRCA/M_sce_hl_after_resuction.rds')
+#setwd('../')
+DimPlot(sce.all,reduction = "umap",label=T )
+
+##检查常见分群
+library(ggplot2) 
+genes_to_check = c('CD86','TLR4','CD163','MSR1','MKI67','IRF8','CLEC9A',
+                   'EREG','LAMP3')
+p_all_markers <- DotPlot(sce.all, features = genes_to_check,
+                         assay='RNA'  )  + coord_flip()
+
+p_all_markers
+
+genes_to_check<-c('CD1C','CD86','IL7R','CD14','CD4f','CD141','CD16','CD274',
+                  'ITGA9','CLEC9A','FCGR3A')
+DotPlot(sce.all, features = genes_to_check,
+                         assay='RNA'  )  + coord_flip()
+
+genes_to_check<-c('CD14','FCGR3A','CCR7','XCR1','CD1C','C1QC','MRC1','ITGAM',
+                  'CD209','ANPEP','CMKR1','VCAN','FCGR3B','MKI67','CLEC9A','FCER1A','LY6C2')
+maker<-FindAllMarkers(sce.all)
+maker_list<-split(maker,maker$cluster)
+sorted_maker_list <-lapply(maker_list, function(x){
+ x<-x[order(x$avg_log2FC,decreasing = T),]
+})
+library(openxlsx)
+write.xlsx(sorted_maker_list,'./sc_BRCA/Macro_maker_list_0.2.xlsx',rowNames=T)
+?write.xlsx
+
+maker_genes_check<-c('CCL4','CCL4L2','JUN',#cluster0
+                     'PPP1R15A','DUSP2','NR4A1',#cluster1
+                       #'AREG','CD1C','LGALS2',
+                     'CXCL8','C15orf48','ALOX5AP',
+                       'CXCL10','CXCL9','ISG15',
+                      'CYP27A1','CTSD','PLA2G7',
+                     'S100A8','VCAN','S100A9',
+                    'STMN1','MKI67','HIST1H4C',
+                    # 'XCR1','C1QC','CLEC9A','FCER1A',
+                    )
+maker_genes_check <- c(
+  'CCL4', 'CCL4L2', 'JUN',
+  'PPP1R15A', 'DUSP2', 'NR4A1',
+  'CXCL8', 'C15orf48', 'ALOX5AP',
+  'CXCL10', 'CXCL9', 'ISG15',
+  'CYP27A1', 'CTSD', 'PLA2G7',
+  'S100A8', 'VCAN', 'S100A9',
+  'STMN1', 'MKI67', 'HIST1H4C',
+  'LAMP3','CLEC9A','IRF7','CD1C'
+)
+
+DotPlot(sce.all, features = maker_genes_check,
+        assay='RNA')  + coord_flip()
+
+ gene_list<-list()
+for (i in names(maker_list)) {
+x<-maker_list[[i]]
+x<-rownames(x)[1:50]
+gene_list[[i]]<-x
+}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+##基因ID转换
+KEGG_list<-list()
+GO_list<-list()
+for (i in names(maker_list)) {
+  x<-maker_list[[i]]
+  x<-bitr(geneID = x$gene,
+          fromType = 'SYMBOL',
+          toType = 'ENTREZID',
+          OrgDb = org.Hs.eg.db)[,2]
+  kegg<-enrichKEGG(gene = x)
+  go<-enrichGO(gene = x,
+               ont = 'BP',
+               OrgDb = org.Hs.eg.db)
+KEGG_list[[i]]<-kegg
+GO_list[[i]]<-go
+}
+
+
+dotplot(KEGG_list[[3]])
+
+
+##
+
+check_genes = c("APOE","C1QA",'C1QB','C1QC',#Macrophages
+                "ITGAX","CD14","FCGR3A","S100A8","MMP19",#monocyte 
+                "CLEC10A","CLEC4C", #DC cells
+                "IRF8","CLEC9A", "FLT3",#C10_cCD1_CLEC9A IDO1+
+                "CD1E","CD1C", #C6_cCD2_CD1C
+                "CCR7","LAMP3","FSCN1", "IDO1","IDO2", #DC3 #C11_cDC3_LAMP3
+              #  "LILRA4", "SLC32A1","SHD","LRRC26","PACSIN1","IL3RA", #pDCs C9_pDC_LILRA4 GZMB+
+                "CSF3R","S100A9","FCGR3B","ALPL","CXCR1",#Neutrophils
+                "OLR1","LDHA","IL1RN","CD44",
+              'MKI67','CD68' #PMN-MDSC
+)
+DotPlot(sce.all, features = check_genes,
+        assay='RNA')  + coord_flip()
+DotPlot(object = sce.all, features = check_genes,assay = "RNA",scale = T) + 
+  coord_flip()
+
+
+genes_check<-c('CD68','CD163','CD14',
+               "APOE","C1QA",'C1QB',#MACROPHAGE
+               'S100A8','S100A9',"ITGAX","FCGR3A",#momocyte
+               'CD1E','CD1C','IDO1','IDO2',#DC
+               'MKI67')
+               
+DotPlot(object = sce.all, features = genes_check,assay = "RNA",scale = T) + 
+  coord_flip()              
+
+##分辨率0.3
+maker<-FindAllMarkers(sce.all)
+maker_list<-split(maker,maker$cluster)
+names(maker_list)<-celltype$celltype
+write.xlsx(maker_list,'./sc_BRCA/Macro_maker_list_0.3.xlsx',rowNames=T)
+
+
+##细胞类型注释
+celltype=data.frame(ClusterID=0:9,
+                    celltype= 0:9) 
+celltype[celltype$ClusterID %in% c(0),2]='Macro1' 
+celltype[celltype$ClusterID %in% c(1),2]='Macro2' 
+celltype[celltype$ClusterID %in% c(2),2]='DC1'  
+celltype[celltype$ClusterID %in% c(3),2]='Macro3'  
+celltype[celltype$ClusterID %in% c(4),2]='Momocyte'   
+celltype[celltype$ClusterID %in% c(5),2]='Macro4' 
+celltype[celltype$ClusterID %in% c(6),2]='Cycling' 
+celltype[celltype$ClusterID %in% c(7),2]='Macro5' 
+celltype[celltype$ClusterID %in% c(8),2]='DC2'
+celltype[celltype$ClusterID %in% c(9),2]='Macro6'
+
+sce.all@meta.data$celltype = "NA"
+for(i in 1:nrow(celltype)){
+  sce.all@meta.data[which(sce.all@meta.data$RNA_snn_res.0.3 == celltype$ClusterID[i]),'celltype'] <- celltype$celltype[i]}
+table(sce.all@meta.data$celltype)
+
+DimPlot(sce.all,label = T,group.by = 'celltype')
+
+
+
+##maker基因气泡图
+n <- length(genes_check)
+qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+pie(rep(1,n), col=sample(col_vector, n))
+color = grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)]
+pie(rep(6,n), col=sample(color, n))
+col_vector
+col_vector =c(wes_palette("Darjeeling1"), wes_palette("GrandBudapest1"), wes_palette("Cavalcanti1"), wes_palette("GrandBudapest2"), wes_palette("FantasticFox1"))
+pal <- wes_palette("Zissou1", 10, type = "continuous")
+pal2 <- wes_palette("Zissou1", 5, type = "continuous")
+pal[3:10]
+
+
+# 画dotplot
+
+library(ggplot2)
+
+Idents(sce.all) <- "celltype"
+##  RotatedAxis() scale_colour_gradientn都是比较重要的
+sce.all$celltype<-factor(sce.all$celltype,levels = unique(sce.all$celltype))
+dp<-DotPlot(sce.all, features = genes_check, dot.scale = 10) + RotatedAxis() +
+  theme(axis.text.x = element_text(angle = 45, face="italic", hjust=1), axis.text.y = element_text(face="bold")) + 
+  scale_colour_gradientn(colours = pal2)+ theme(legend.position="right")  + labs(title = "cluster markers", y = "", x="")
+
+dp+theme(plot.title = element_text(hjust = 0.5))+coord_flip()
+
+
+##UMAP图片
+umap <- sce.all@reductions$umap@cell.embeddings %>% as.data.frame
+
+## Step 02. 获取与坐标对应的细胞类型
+cellType <- sce.all$celltype %>% as.data.frame %>%
+  `colnames<-` ("Celltype")
+umap <- cbind(umap, cellType)
+head(umap)
+
+myTheme <- theme(
+  panel.background = element_blank(),
+  panel.grid = element_blank(),
+  axis.line = element_blank(),
+  axis.title = element_blank(),
+  axis.text = element_blank(),
+  axis.ticks = element_blank(),
+  legend.background = element_blank(),
+  legend.key = element_blank(),
+  legend.key.size = unit(1, "cm"),
+  legend.text = element_text(size = 12),
+)  
+
+xstart <- min(umap$UMAP_1); xend <- min(umap$UMAP_1) + 3
+ystart <- min(umap$UMAP_2); yend <- min(umap$UMAP_2) + 3
+
+head(umap)
+umap$group<-sce.all$group
+umap_h<-filter(umap,group=='UPR score high')
+load('./color_for_scRNAseq.Rdata')
+allcolour <- data.color$color.scRNAseq[1:10]
+cellTypeLoc <- umap %>%
+  group_by(Celltype) %>%
+  summarise(
+    Loc1 = median(UMAP_1),
+    Loc2 = median(UMAP_2)
+  ) %>% as.data.frame
+p_h <- ggplot(umap_h,aes(x= UMAP_1 , y = UMAP_2 ,colour = Celltype)) +  
+  geom_point(size =0.8,alpha=0.5) +  
+  scale_colour_manual(values = allcolour)+
+  guides(colour = guide_legend(
+    override.aes = list(size=3)))+
+  geom_segment(aes(x = xstart, y = ystart , xend = xend, yend = ystart),
+               colour = "black", linewidth=1,arrow = arrow(length = unit(0.3,"cm")))+ 
+  geom_segment(aes(x = xstart, y = ystart, xend = xstart , yend = yend),
+               colour = "black", linewidth=1,arrow = arrow(length = unit(0.3,"cm"))) +
+  annotate("text", x = xstart +1.5, y = ystart -1, label = "UMAP_1",
+           color="black",size = 3, fontface="bold" ) + 
+  annotate("text", x = xstart -1, y = ystart + 1.5, label = "UMAP_2",
+           color="black",size = 3, fontface="bold" ,angle=90) +
+  geom_text(data = cellTypeLoc, 
+            mapping = aes(x = Loc1, y = Loc2, label = Celltype),
+            color = "black", size = 4.5)+myTheme+
+  theme(legend.position = 'none')+labs(title = 'UPR High')+ theme(plot.title = element_text(hjust = 0.5))
+p_h
+
+umap_l<-filter(umap,group=='UPR score low')
+p_l <- ggplot(umap_l,aes(x= UMAP_1 , y = UMAP_2 ,colour = Celltype)) +  
+  geom_point(size =0.8,alpha=0.5) +  
+  scale_colour_manual(values = allcolour)+
+  guides(colour = guide_legend(
+    override.aes = list(size=3)))+
+  geom_text(data = cellTypeLoc, 
+            mapping = aes(x = Loc1, y = Loc2, label = Celltype),
+            color = "black", size = 4.5)+myTheme+
+  labs(title='UPR Low',color='Celltype')+ theme(plot.title = element_text(hjust = 0.5))
+p_l
+
+library(patchwork)
+p_h+p_l
+ggsave('./outplot/BRCA_UMAP_macro_H VS L.pdf',width = 15,height =8 )
+library(clusterProfiler)
+library(org.Hs.eg.db)
+##基因ID转换
+KEGG_list<-list()
+GO_list<-list()
+for (i in names(maker_list)) {
+  x<-maker_list[[i]]
+  x<-bitr(geneID = x$gene,
+          fromType = 'SYMBOL',
+          toType = 'ENTREZID',
+          OrgDb = org.Hs.eg.db)[,2]
+  kegg<-enrichKEGG(gene = x)
+  go<-enrichGO(gene = x,
+               ont = 'BP',
+               OrgDb = org.Hs.eg.db)
+  KEGG_list[[i]]<-kegg
+  GO_list[[i]]<-go
+}
+dotplot(GO_list$Macro1)

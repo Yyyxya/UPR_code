@@ -1,0 +1,18 @@
+#生存曲线的绘制
+library(dplyr)
+library(readr)
+library(survival)
+library(survminer)
+sfit1<-survfit(Surv(OS.time/360,OS)~group,data=x2)
+ggsurvplot(sfit1,pval = T,legend=c(0.8,0.8),
+           title='TCGA chort',risk.table = T,
+           palette = c("#E31A1C","#1F78B4"),
+           xlab='Year')
+colnames(test)
+
+B<-exp_geneset$BRCA
+B<-B[,colnames(B)%in%rownames(x2)]
+B<-as.data.frame(t(B[,rownames(x2)]))                 
+cor(B$WGCNA_UPR,B_expr$score)
+table(rownames(B)==rownames(B_expr))
+B$risk_scores<-B_expr$score

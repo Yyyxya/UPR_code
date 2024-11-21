@@ -1,0 +1,251 @@
+##step1.donwload
+##下载单个样本 使用kingfisher
+cat >download.sh
+cat id_3.txt | while read id;
+do
+echo $id
+kingfisher get -r$id -m ena-ascp ena-ftp prefetch aws-http
+done
+
+##下载整个项目
+cat >download.sh
+cat p_id.txt | while read id;
+do
+echo $id
+kingfisher get -p$id -m ena-ascp ena-ftp prefetch aws-http
+done
+
+##run
+nohup bash download.sh &
+
+#pigz压缩fastqc为fastq.gz
+cat >gz.sh 
+cat gz.txt | while read id;
+do pigz -p 4 $id;
+done
+
+#run
+bash gz.sh
+
+##step2.QC
+cat >QC.sh
+HOME_PATH=/home/data/fuli09/tem/rnaseq_mus
+FASTQ_PATH=$HOME_PATH/1.rawdata
+#务必确保fastq文件的后缀为`.fastq.gz`
+FASTQ_PATTERN=*.fastq.gz
+FASTQC_COMMAND=fastqc
+MULTIQC_COMMAND=multiqc
+FASTQC_OUTPUT=$HOME_PATH/2.fastq_results
+CORES=4
+
+if [ ! -d $FASTQC_OUTPUT ]
+then
+ mkdir -p $FASTQC_OUTPUT
+fi
+
+$FASTQC_COMMAND --outdir $FASTQC_OUTPUT --threads $CORES $FASTQ_PATH/$FASTQ_PATTERN
+$MULTIQC_COMMAND $FASTQC_OUTPUT -o $FASTQC_OUTPUT
+#run
+nohup bash QC.sh &
+
+
+#single
+cat >merge_fastq_single.sh 
+FATAQ_PATH=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test/
+OUT_DIR=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test/
+txt_file=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test/sample.txt
+#Step1.重命名
+cat $txt_file | while read line;
+do
+  arr=($line)
+  srrID=${arr[0]}
+  gseID=${arr[1]}
+  echo "Start ${srrID}.fastq.gz"
+  mv $FATAQ_PATH/${srrID}.fastq.gz $OUT_DIR/${gseID}_${srrID}.fastq.gz;
+done
+
+#Step2. 合并相同前缀的文件
+for gseID in `cat $txt_file|cut -f2|sort|uniq`;
+do echo ${gseID}; 
+	cat $FATAQ_PATH/${gseID}*.fastq.gz >$OUT_DIR/${gseID}.fastq.gz;
+	if [ -f $OUT_DIR/${gseID}.fastq.gz ]
+then
+	rm $FATAQ_PATH/${gseID}_SRR*.fastq.gz
+fi
+echo "End ${gseID}.fastq.gz"
+done
+
+#paired
+cat >merge_fastq_paired.sh 
+FATAQ_PATH=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test
+OUT_DIR=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test/
+txt_file=~/yxy/1.UPR/1.rawdata/2.merge_rawdata/test/id.txt
+
+#Step1.重命名
+cat $txt_file | while read line;
+do
+arr=($line)
+srrID=${arr[0]}
+gseID=${arr[1]}
+echo "Start ${srrID}.fastq.gz"
+mv $FATAQ_PATH/${srrID}_1.fastq.gz $OUT_DIR/${gseID}_${srrID}_1.fastq.gz;
+mv $FATAQ_PATH/${srrID}_2.fastq.gz $OUT_DIR/${gseID}_${srrID}_2.fastq.gz;
+done
+
+#Step2. 合并相同前缀的文件
+for gseID in `cat $txt_file|cut -f2|sort|uniq`;
+do echo ${gseID}; 
+cat $FATAQ_PATH/${gseID}*_1.fastq.gz >$OUT_DIR/${gseID}_1.fastq.gz;
+if [ -f $OUT_DIR/${gseID}_1.fastq.gz ]
+then
+rm $FATAQ_PATH/${gseID}_SRR*_1.fastq.gz
+fi
+echo "End ${gseID}_1.fastq.gz"
+done
+
+for gseID in `cat $txt_file|cut -f2|sort|uniq`;
+do echo ${gseID}; 
+cat $FATAQ_PATH/${gseID}*_2.fastq.gz >$OUT_DIR/${gseID}_2.fastq.gz;
+if [ -f $OUT_DIR/${gseID}_2.fastq.gz ]
+then
+rm $FATAQ_PATH/${gseID}_SRR*_2.fastq.gz
+fi
+echo "End ${gseID}_2.fastq.gz"
+done
+
+#step3.trim_galore_clean
+#单端测序数据
+cat >unparied_trimgalore.sh 
+HOME_PATH=/home/data/fuli09/yxy/1.UPR
+FASTQ_PATH=$HOME_PATH/1.rawdata
+TRIMGALORE_COMMAND=trim_galore
+TRIMGALORE_OUTPUT=$HOME_PATH/3.trim_galore_clean
+CORES=8
+for FILE in $FASTQ_PATH/*fastq.gz
+do
+BASE=`basename $FILE | sed s/.fastq\.gz//`
+echo "Processing $BASE"
+F=$FASTQ_PATH/$BASE".fastq.gz"
+echo $F
+#done
+$TRIMGALORE_COMMAND \
+--phred33 \
+--quality 20 \
+--output_dir $TRIMGALORE_OUTPUT/ \
+--cores $CORES \
+--fastqc \
+--trim-n $F
+mv $TRIMGALORE_OUTPUT/$BASE_trimmed.fq.gz \
+$TRIMGALORE_OUTPUT/$BASE".fastq.gz"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_trimed_fastqc.html" \
+$TRIMGALORE_OUTPUT/$BASE"fastqc.html"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_trimed_fastqc.zip" \
+$TRIMGALORE_OUTPUT/$BASE"fastqc.zip"
+
+if [ -f $TRIMGALORE_OUTPUT/$BASE".fastq.gz" ]
+then
+rm $F
+fi
+done
+
+#双端测序数据
+cat paried_trimgalore.sh 
+HOME_PATH=/home/data/fuli09/yxy/1.UPR
+FASTQ_PATH=$HOME_PATH/1.rawdata
+TRIMGALORE_COMMAND=trim_galore
+TRIMGALORE_OUTPUT=$HOME_PATH/3.trim_galore_clean
+CORES=8
+for FILE in $FASTQ_PATH/*_1.fastq.gz
+do
+BASE=`basename $FILE | sed s/_1\.fastq\.gz//`
+echo "Processing $BASE"
+F1=$FASTQ_PATH/$BASE"_1.fastq.gz"
+F2=$FASTQ_PATH/$BASE"_2.fastq.gz"
+echo $F1 $F2
+#done
+
+$TRIMGALORE_COMMAND \
+--phred33 \
+--quality 20 \
+--output_dir $TRIMGALORE_OUTPUT/ \
+--cores $CORES \
+--paired \
+--fastqc \
+--trim-n $F1 $F2
+
+mv $TRIMGALORE_OUTPUT/$BASE"_1_val_1.fq.gz" \
+$TRIMGALORE_OUTPUT/$BASE"_1.fastq.gz"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_2_val_2.fq.gz" \
+$TRIMGALORE_OUTPUT/$BASE"_2.fastq.gz"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_1_val_1_fastqc.html" \
+$TRIMGALORE_OUTPUT/$BASE"_1_fastqc.html"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_1_val_1_fastqc.zip" \
+$TRIMGALORE_OUTPUT/$BASE"_1_fastqc.zip"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_2_val_2_fastqc.html" \
+$TRIMGALORE_OUTPUT/$BASE"_2_fastqc.html"
+
+mv $TRIMGALORE_OUTPUT/$BASE"_2_val_2_fastqc.zip" \
+$TRIMGALORE_OUTPUT/$BASE"_2_fastqc.zip"
+
+if [ -f $TRIMGALORE_OUTPUT/$BASE"_2.fastq.gz" ]
+then
+rm $F1
+rm $F2
+fi
+done
+
+#run
+nohup bash paried_trimgalore.sh &
+
+
+#step4.salmon
+
+##human
+#paired
+ cat >salmon.hg38.sh 
+FASTQ_PATH=~/yxy/1.UPR/3.trim_galore_clean
+#hg38
+INDEX=~/ref_annotation_Geneset/8.RNAseq_index/GRCh38.salmon_sa_index
+GTF=~/ref_annotation_Geneset/8.RNAseq_index/GRCh38.salmon_sa_index/GRCh38.gtf
+OUT_DIR=~/ngs_data/9.RNAseq/2.immune_cohort/4.Salmon
+
+#务必确保fastq文件的后缀为`_1.fastq.gz`
+for FILE in `ls $FASTQ_PATH/*_1.fastq.gz`; 
+do 
+SAMPLE=`basename $FILE | sed s/_1\.fastq\.gz//`
+echo "Processing $SAMPLE"
+
+salmon quant --gcBias -l A -1 $FASTQ_PATH/${SAMPLE}_1.fastq.gz -2 $FASTQ_PATH/${SAMPLE}_2.fastq.gz  -i $INDEX -g $GTF -o $OUT_DIR/${SAMPLE}.salmon.count -p 10 >$OUT_DIR/${SAMPLE}.salmon.log 2>&1; done
+
+#run
+nohup bash salmon.hg38.sh
+
+#单端测序数据的salmon
+salmon quant --gcBias -l A -r $FASTQ_PATH/$SAMPLE.fastq.gz  -i $INDEX -g $GTF -o $OUT_DIR/${SAMPLE}.salmon.count -p 10 >$OUT_DIR/${SAMPLE}.salmon.log 2>&1
+
+
+
+###小鼠
+cat >salmon.mm10.sh
+FASTQ_PATH=~/tem/rnaseq_mus/1.rawdata
+#mm10
+INDEX=~/ref_annotation_Geneset/8.RNAseq_index/mm10.Ensembl/mm10.salmon_sa_index
+GTF=~/ref_annotation_Geneset/8.RNAseq_index/mm10.Ensembl/mm10.gtf
+OUT_DIR=~/tem/rnaseq_mus/4.Salmon/
+
+#务必确保fastq文件的后缀为`_1.fastq.gz`
+for FILE in `ls $FASTQ_PATH/*_1.fastq.gz`; 
+do 
+SAMPLE=`basename $FILE | sed s/_1\.fastq\.gz//`
+echo "Processing $SAMPLE"
+
+salmon quant --gcBias -l A -1 $FASTQ_PATH/${SAMPLE}_1.fastq.gz -2 $FASTQ_PATH/${SAMPLE}_2.fastq.gz  -i $INDEX -g $GTF -o $OUT_DIR/${SAMPLE}.salmon.count -p 10 >$OUT_DIR/${SAMPLE}.salmon.log 2>&1; done
+
+## Run salmon
+nohup bash salmon.mm10.sh 1>salmon.log 2>&1 &

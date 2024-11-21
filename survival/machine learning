@@ -1,0 +1,139 @@
+##三种机器学习算法筛选特征基因
+#加载需要的R包      
+library(randomForestSRC)
+library(tidyverse)
+library(ggplot2)
+library(ggvenn)
+library(glmnet)
+library(survival)
+library(xgboost)
+
+#LASSO回归分析
+#alpha=1为lasso回归0为Ridge回归，0-1之间为弹性网络回归
+
+#提取基因表达矩阵
+gene<-genesets4gsva$WGCNA_UPR[1:159]
+x1 <- t_expr$BRCA
+x1<-t(x1[rownames(x1)%in%gene,colnames(x1)%in%rownames(x2)])
+x1<-x1[rownames(x2),]
+x2<-test[,c(37,38)]
+x2<-filter(x2,x2$OS.time!=0)
+x2 <- as.matrix(Surv(x2$OS.time/365,x2$OS))
+set.seed(123)
+cvfit = cv.glmnet(as.matrix(x1), x2,
+                  nfold=10,
+                  family = "cox",
+                  alpha=1
+)
+#绘制lamba图
+#pdf("lambda.pdf",width = 10,height = 8)
+cvfit
+plot(cvfit)
+#dev.off()
+#此处使用`lambda min`
+cvfit$lambda.1se#最佳lambda值
+
+#查看变量筛选结果
+coef(cvfit,s='lambda.min')
+
+
+fit <- glmnet(x1, x2,
+              family = "cox")
+#用包自带的函数绘制lasso回归图
+#pdf("lasso.pdf",width = 10,height = 8)
+plot(fit)
+#dev.off()
+#最小值一个标准误时各变量的系数值
+coef.min = coef(cvfit, s = "lambda.min")
+#非零系数
+active.min = which(coef.min != 0)
+#非零变量，基因名
+geneids <- rownames(coef.min)[active.min]
+#提取选中的基因对应的coefficient，回归系数
+index.min = coef.min[active.min]
+#按列合并两个变量
+combine <- cbind(geneids, index.min)
+#将数据转换为数据框
+lasso.result<-as.data.frame(combine)
+#将index.min数据类型改为数值型。
+lasso.result$index.min<-as.numeric(lasso.result$index.min)
+head(lasso.result)
+lasso.result
+lasso<-filter(lasso.result,lasso.result$index.min!=0)
+lasso<-lasso$geneids
+lasso
+
+##随机森林分析
+x1<-as.data.frame(x1)
+x2<-test[,c(37,38)]
+x2<-filter(x2,x2$OS.time!=0)
+RF_expr<-cbind(x1,x2)
+fit <- rfsrc(Surv(OS.time,OS)~., data = RF_expr,
+             ntree = 1000, nodesize = 14,
+             splitrule = 'logrank',
+             importance = T,
+             proximity = T,
+             forest = T)
+#绘制OBB图和VIP图
+#pdf("forest.pdf")
+plot(fit)
+#dev.off()
+#筛选特征基因
+rftop<-var.select(fit)
+#将数据类型转化为数据框
+rftop2<-data.frame(
+  Feature=rftop$topvars,
+  vimp=rftop$varselect[rftop$topvars,2])
+rftop2
+
+
+
+
+##xgboost算法
+test_filter<-test[rownames(test)%in%rownames(x2),]
+x_label<-ifelse(test_filter$OS==1,test_filter$OS.time,-test_filter$OS.time)
+x_train<-as.matrix(x1)
+x_val<-xgb.DMatrix(x_train,
+                   label=x_label)
+xgb_param<-list("objective"="survival:cox",
+                "eval_metric"="cox-nloglik")
+xgb.model<-xgb.train(params=xgb_param,
+                     data=x_val,
+                     nrounds=100,
+                     eta=0.1,
+                     watchlist=list(val2=x_val))
+e<-data.frame(xgb.model$evaluation_log)
+ggplot(aes(x=iter,y=val2_cox_nloglik),data=e)+
+  geom_point(color="pink",size=3)+
+  geom_line()+
+  theme_bw()
+#ggsave("train_error.pdf")
+#筛选VIP值排名前十的基因。
+imp<-xgb.importance(feature_names=colnames(x_train),model=xgb.model)
+top_10<-imp[1:10,1:2]
+top_20<-imp[1:20,1:2]
+top_10
+g<-intersect(rftop2$Feature,top_10$Feature)
+g
+gf<-intersect(g,lasso)
+gf
+
+
+#生存曲线的绘制
+library(dplyr)
+library(readr)
+library(survival)
+library(survminer)
+sfit1<-survfit(Surv(OS.time/360,OS)~group,data=x2)
+ggsurvplot(sfit1,pval = T,legend=c(0.8,0.8),
+           title='TCGA chort',risk.table = T,
+           palette = c("#E31A1C","#1F78B4"),
+           xlab='Year')
+colnames(test)
+
+B<-exp_geneset$BRCA
+B<-B[,colnames(B)%in%rownames(x2)]
+B<-as.data.frame(t(B[,rownames(x2)]))                 
+cor(B$WGCNA_UPR,B_expr$score)
+table(rownames(B)==rownames(B_expr))
+B$risk_scores<-B_expr$score

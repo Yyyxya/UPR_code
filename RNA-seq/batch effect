@@ -1,0 +1,186 @@
+##数据整理，去除批次效应
+
+##step0.data_prepare
+library(openxlsx)
+
+#input data
+exp0<-readRDS('./rawdata/cell_count_paried_tpm_1.rds')
+exp1<-readRDS('./rawdata/cell_count_single_tpm_1.rds')
+exp2<-readRDS('./rawdata/cell_count_tpm_2.rds')
+exp_tpm<-cbind(exp0$abundance,exp1$abundance)
+exp_tpm<-cbind(exp_tpm,exp2$abundance)
+exp_count<-cbind(exp0$counts,exp1$counts)
+exp_count<-cbind(exp_count,exp2$counts)
+gene.df<-exp0$gene_name
+exp_tpm<-as.data.frame(exp_tpm)
+exp_count<-as.data.frame(exp_count)
+exp_tpm<-as.data.frame(exp_tpm)
+exp_tpm$ENSEMBL<-rownames(exp_tpm)
+exp_count$ENSEMBL<-rownames(exp_count)
+colnames(exp_tpm)
+duplicated(colnames(exp_tpm))
+exp_tpm<-exp_tpm[,!duplicated(colnames(exp_tpm))]
+exp_count<-exp_count[,!duplicated(colnames(exp_count))]
+exp_tpm<-exp_tpm[,-c(94,132:137)]
+exp_count<-exp_count[,-c(94,132:137)]
+
+pd<-read.xlsx('./pd/meta.data.xlsx',sheet = 6)
+rownames(pd)<-pd$GSM_ID
+
+#修改列名为GSM开头
+ID<-data.frame(GSE=pd$GSM_ID,SRR=pd$SRR_ID)
+
+m<-match(colnames(exp_count),pd$SRR_ID)
+new_ID<-pd$GSM_ID[m]
+new_ID
+old_ID<-colnames(exp_count)[c(1:2,94:114)]
+old_ID
+new_ID[c(1:2,94:114)]<-old_ID
+colnames(exp_tpm)<-new_ID
+colnames(exp_count)<-new_ID
+
+#保存rawdata
+exp_list<-list(exp_tpm,exp_count)
+names(exp_list)<-c('tpm','count')
+saveRDS(exp_list,'./rawdata/exp_tpm_count.rds')
+
+#input.data
+exp_list<-readRDS('../rawdata/exp_tpm_count.rds')
+exp_tpm<-exp_list$tpm
+exp_count<-exp_list$count
+
+#ID转换
+library(biomaRt)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+gene.GENETYPE<-bitr(rownames(exp_count),
+                    fromType='ENSEMBL',
+                    toType=c('GENETYPE','SYMBOL'),
+                    OrgDb=org.Hs.eg.db)
+table(gene.GENETYPE$GENETYPE)
+exp_count$ENSEMBL<-rownames(exp_count)
+exp_count<-merge(exp_count,gene.GENETYPE)
+exp_tpm$ENSEMBL<-rownames(exp_tpm)
+exp_tpm<-merge(exp_tpm,gene.GENETYPE)
+
+#limma包去除重复
+library(limma)
+library(limma)
+exp_count<-as.data.frame(avereps(exp_count[,-c(1,132,133)],ID=exp_count$SYMBOL))
+exp_count[1:5,1:5]
+exp_tpm<-as.data.frame(avereps(exp_tpm[,-c(1,132,133)],ID=exp_tpm$SYMBOL))
+
+##过滤样本
+#keep_data <- rowSums(exp_count> 0) >= floor(0.5*ncol(exp_count))
+exp_count <- exp_count[apply(exp_count,1,mean) > 1,]
+exp_tpm<-exp_tpm[rownames(exp_count),]
+#table(keep_data)
+#exp_tpm <- exp_tpm[keep_data,]
+dim(exp_tpm)
+
+##保存
+exp_list<-list(exp_tpm,exp_count)
+names(exp_list)<-c("tpm",'count')
+saveRDS(exp_list,'./rawdata/exp_tpm_count_filter.rds')
+
+#去除批次效应
+library(dplyr)
+library(openxlsx)
+library(stringr)
+library(limma)
+library(tidyverse)
+library(ggplot2)
+library(patchwork)
+# library(GEOquery)
+library(tinyarray)
+library(tidyverse)
+library(readr)
+library(openxlsx)
+library(IOBR)
+library(sva)
+library(cluster)
+library(oompaBase)
+library(ggsci)
+source("E:/code/batchPCA.R")
+load("E:/code/color_for_scRNAseq.Rdata")
+
+data.color$color.scRNAseq
+col.datasets = data.color$color.scRNAseq[1:length(unique(pd$GSE_ID))]
+col.tissue = c(data.color$ggsci,"#B09C85B2")
+col.Celline = data.color$color.scRNAseq[1:length(unique(pd$Celline))]
+col.Condition = c('#1F78B4',"#E31A1C")
+
+exp_tpm<-readRDS('./exp_tpm_count_filter.rds')
+exp_tpm<-exp_tpm$tpm
+pd<-read.xlsx('../pd/meta.data.xlsx',sheet = 6)
+rownames(pd)<-pd$GSM_ID
+pd<-pd[colnames(exp_tpm),]
+group = pd$GSE_ID
+combined.expr = log2(exp_tpm+0.1)
+##log2转化
+#dir.create('./rawdata/Outplot')
+group<-pd$GSE_ID
+p1<-batchPCA.ggplot(input.data =t(scale(t(combined.expr))),
+         group = group,
+         fig.dir = "./Outplot/",
+         title.lab = "PCA Before combact",
+         cols = col.datasets,
+         showID = F,
+         cex = 0.7,
+         showLegend = T,
+         ellipse = T,
+         label = F,
+         text.size = 16)
+
+group<-pd$Condition
+p2<-batchPCA.ggplot(input.data =t(scale(t(combined.expr))),
+                group = group,
+                fig.dir = "./rawdata/Outplot/",
+                title.lab  = "PCA Before combact",
+                cols = col.Condition,
+                showID = F,
+                cex = 0.7,
+                showLegend = T,
+                ellipse = T,
+                text.size = 16,
+                label = F)
+
+
+#Step2.去除批次效应
+library(sva)
+batch <- data.frame(batch = pd$GSE_ID)
+
+modcombat = model.matrix(~1, data = batch)
+combined.expr.combat <- as.data.frame(ComBat(dat=as.matrix(combined.expr),
+                                             batch=batch$batch, mod=modcombat))
+boxplot(combined.expr.combat)
+# boxplot(combined.expr)
+
+# 4.1 绘制PCA散点图，检查批次
+
+  group = pd$GSE_ID
+p3<-batchPCA.ggplot(input.data= t(scale(t(combined.expr.combat))),
+           group = group,
+           fig.dir = "./rawdata/Outplot/",
+           title.lab = "PCA After Combat",
+           cols = col.datasets,
+           showID = F,
+           cex = 0.7,
+           showLegend = F,ellipse = T,
+           label=F,
+           text.size = 16)
+  
+##condition的PCA
+  group<-pd$Condition
+p4<-batchPCA.ggplot(input.data= t(scale(t(combined.expr.combat))),
+                  group = group,
+                  fig.dir = "./rawdata/Outplot/",
+                  title.lab = "PCA After Combat",
+                  cols = col.Condition,
+                  showID = F,
+                  cex = 0.6,
+                  showLegend = F,
+                  ellipse = T,
+                  text.size = 16,
+                  label = F)
+p4  

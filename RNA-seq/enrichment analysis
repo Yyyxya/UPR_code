@@ -1,0 +1,21 @@
+rm(list = ls())
+load('../WGCNA/genes.Rdata')
+##GO和KEGG富集分析蓝色基因模块
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(biomaRt)
+gene<-genes$blue
+gene_need<-bitr(geneID = gene,
+                fromType = 'SYMBOL',
+                toType = 'ENTREZID',
+                OrgDb = org.Hs.eg.db)[,2]
+KEGG<-enrichKEGG(gene = gene_need,
+                 organism = 'hsa',
+                 pvalueCutoff = 0.5)
+GO<-enrichGO(gene=gene_need,OrgDb = org.Hs.eg.db,
+             ont = 'BP',pvalueCutoff = 0.5)
+dotplot(KEGG,showCategory=10)
+dotplot(GO,showCategory=10)
+
+write.xlsx(KEGG,'../WGCNA/enrich/KEGG_blue.xlsx')
+write.xlsx(GO,'../WGCNA/enrich/GO_blue.xlsx')
